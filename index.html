@@ -501,17 +501,20 @@
 
 <script>
 /* ════════════════════════════════════════════════════════
-   ★  ADMIN CONFIGURATION — EDIT THIS SECTION  ★
+   ★  CONFIGURACIÓN — EDITA ESTA SECCIÓN  ★
 ════════════════════════════════════════════════════════ */
 const CONFIG = {
-  PASS_THRESHOLD: 0.80,      // 80% = 38.4/48 → rounds to 39 correct
-  MAX_RETRIES:    2,          // Max retakes AFTER first attempt (set to Infinity for unlimited)
-  ADMIN_PASSWORD: "CovisianAdmin2025",   // Change this!
-  FILE_NAME:      "Covisian_Compliance_Results.xlsx"
+  PASS_THRESHOLD: 0.80,      // 80%
+  MAX_RETRIES:    2,         // Máximos reintentos
+  ADMIN_PASSWORD: "Avaya123!",
+  FILE_NAME:      "Covisian_Compliance_Results.xlsx",
+
+  // 🔗 PEGA AQUÍ TU URL DE GOOGLE APPS SCRIPT
+  APPS_SCRIPT_URL: "https://script.google.com/macros/s/AKfycbyWt7JNGNqBExRWwOVeIDSDF1A4BnCRGfiR33lgzXqyCSvT1_jEfkVhpBGO5TOBXXK_vQ/exec"
 };
 /* ════════════════════════════════════════════════════════ */
 
-/* ─── QUESTION BANK ─── */
+/* ─── BANCO DE PREGUNTAS ─── */
 const SECTIONS = [
   {
     title: "Compliance Ethics and Information Security",
@@ -598,14 +601,14 @@ const SECTIONS = [
   }
 ];
 
-/* ─── STATE ─── */
+/* ─── ESTADO GLOBAL ─── */
 let participant = {};
-let answers = {};   // globalIndex → chosen option index
+let answers = {};
 let currentSection = 0;
 let attemptNumber = 1;
+let globalAdminResults = [];
 const STORAGE_KEY = "covisian_compliance_results_v2";
 
-/* Build flat question list with global indices */
 const ALL_QUESTIONS = [];
 let gi = 0;
 SECTIONS.forEach((sec, si) => {
@@ -620,28 +623,64 @@ function getSectionRange(si) {
   return { start, end: start + SECTIONS[si].questions.length - 1 };
 }
 
-/* ─── STORAGE ─── */
-function loadResults() {
+/* ─── CONEXIÓN A GOOGLE SHEETS ─── */
+function loadLocalResults() {
   try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]"); } catch { return []; }
 }
-function saveResult(rec) {
-  const arr = loadResults();
+
+async function saveResult(rec) {
+  // Guardado local de respaldo
+  const arr = loadLocalResults();
   arr.push(rec);
   localStorage.setItem(STORAGE_KEY, JSON.stringify(arr));
-}
-function getAttemptsForEmail(email) {
-  return loadResults().filter(r => r.email.toLowerCase() === email.toLowerCase());
+
+  // Envío a Google Apps Script
+  if (CONFIG.APPS_SCRIPT_URL && !CONFIG.APPS_SCRIPT_URL.includes("TU_SCRIPT_ID")) {
+    try {
+      // mode: 'no-cors' permite enviar datos a Apps Script sin problemas de política de origen
+      await fetch(CONFIG.APPS_SCRIPT_URL, {
+        method: "POST",
+        mode: "no-cors",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(rec)
+      });
+      console.log("Resultado enviado exitosamente a Google Sheets.");
+    } catch (err) {
+      console.error("Error al enviar a Google Sheets:", err);
+    }
+  }
 }
 
-/* ─── NAVIGATION ─── */
+async function fetchRemoteResults() {
+  if (CONFIG.APPS_SCRIPT_URL && !CONFIG.APPS_SCRIPT_URL.includes("TU_SCRIPT_ID")) {
+    try {
+      const response = await fetch(CONFIG.APPS_SCRIPT_URL);
+      if (response.ok) {
+        const data = await response.json();
+        globalAdminResults = Array.isArray(data) ? data : [];
+        return globalAdminResults;
+      }
+    } catch (err) {
+      console.error("Error al leer desde Google Sheets:", err);
+    }
+  }
+  globalAdminResults = loadLocalResults();
+  return globalAdminResults;
+}
+
+function getAttemptsForEmail(email) {
+  const combined = [...loadLocalResults(), ...globalAdminResults];
+  return combined.filter(r => r.email && r.email.toLowerCase() === email.toLowerCase());
+}
+
+/* ─── NAVEGACIÓN Y PANTALLAS ─── */
 function showScreen(id) {
   document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
   document.getElementById(id).classList.add('active');
   window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
-/* ─── INTAKE ─── */
-function startTest() {
+async function startTest() {
   const name    = document.getElementById('iName').value.trim();
   const email   = document.getElementById('iEmail').value.trim();
   const country = document.getElementById('iCountry').value;
@@ -657,8 +696,11 @@ function startTest() {
     errEl.style.display = "block"; return;
   }
 
+  // Verifica respuestas previas en Google Sheets
+  await fetchRemoteResults();
+
   const prevAttempts = getAttemptsForEmail(email);
-  const passedBefore = prevAttempts.some(r => r.passed);
+  const passedBefore = prevAttempts.some(r => r.passed === "PASS" || r.passed === true);
 
   if (passedBefore) {
     errEl.textContent = "✅ This email has already passed the assessment. Contact your administrator if you need to retake it.";
@@ -679,7 +721,6 @@ function startTest() {
   showScreen('screenTest');
 }
 
-/* ─── RENDER SECTION ─── */
 function renderSection() {
   const sec = SECTIONS[currentSection];
   const { start } = getSectionRange(currentSection);
@@ -707,8 +748,8 @@ function renderSection() {
           <label class="option-label${answers[gIdx] === oi ? ' selected' : ''}" id="lbl_${gIdx}_${oi}">
             <input type="radio" name="q${gIdx}" value="${oi}"
               ${answers[gIdx] === oi ? 'checked' : ''}
-              onchange="selectAnswer(${gIdx}, ${oi})">
-            <span>${String.fromCharCode(65 + oi)}. ${opt}</span>
+              onchange="selectAnswer(${gIdx},${oi})">
+            <span>${String.fromCharCode(65 + oi)}.${opt}</span>
           </label>
         `).join('')}
       </div>`;
@@ -723,12 +764,10 @@ function renderSection() {
 
 function selectAnswer(gIdx, oi) {
   answers[gIdx] = oi;
-  // Update label highlight
   const opts = document.getElementById('opts_' + gIdx);
   opts.querySelectorAll('.option-label').forEach((lbl, i) => {
     lbl.classList.toggle('selected', i === oi);
   });
-  // Update progress
   const totalAnswered = Object.keys(answers).length;
   const pct = Math.round((totalAnswered / ALL_QUESTIONS.length) * 100);
   document.getElementById('progressFill').style.width = pct + '%';
@@ -757,14 +796,13 @@ function navigate(dir) {
   window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
-/* ─── SUBMIT ─── */
-function submitTest() {
+/* ─── FINALIZAR EVALUACIÓN ─── */
+async function submitTest() {
   if (!sectionAllAnswered(currentSection)) {
     document.getElementById('warnMsg').style.display = 'block';
     return;
   }
 
-  // Score
   let correct = 0;
   ALL_QUESTIONS.forEach(q => {
     if (answers[q.globalIndex] === q.ans) correct++;
@@ -775,7 +813,6 @@ function submitTest() {
   const passed  = pct >= CONFIG.PASS_THRESHOLD;
   const now     = new Date();
 
-  // Build section breakdown
   const breakdown = SECTIONS.map((sec, si) => {
     const { start } = getSectionRange(si);
     let secCorrect = 0;
@@ -802,11 +839,11 @@ function submitTest() {
     ...Object.fromEntries(breakdown.map(b => [`sec_${b.section.split('(')[0].trim().replace(/[^a-z0-9]/gi,'_').toLowerCase()}`, `${b.correct}/${b.total}`]))
   };
 
-  saveResult(record);
+  // Guardar resultado
+  await saveResult(record);
   showResult(correct, total, pct, passed, breakdown);
 }
 
-/* ─── SHOW RESULT ─── */
 function showResult(correct, total, pct, passed, breakdown) {
   const prevAttempts = getAttemptsForEmail(participant.email);
   const attemptsUsed = prevAttempts.length;
@@ -843,7 +880,6 @@ function showResult(correct, total, pct, passed, breakdown) {
   showScreen('screenResult');
 }
 
-/* ─── RETRY ─── */
 function retryTest() {
   answers = {};
   currentSection = 0;
@@ -852,16 +888,13 @@ function retryTest() {
   showScreen('screenTest');
 }
 
-/* ─── DOWNLOAD MY RESULT (single record) ─── */
 function downloadMyResult() {
-  const results = loadResults();
-  const myRecs  = results.filter(r => r.email.toLowerCase() === participant.email.toLowerCase());
+  const myRecs = getAttemptsForEmail(participant.email);
   if (!myRecs.length) return;
   const last = myRecs[myRecs.length - 1];
   exportToExcel([last], `My_Compliance_Result_${participant.name.replace(/\s+/g,'_')}.xlsx`);
 }
 
-/* ─── EXCEL EXPORT ─── */
 function exportToExcel(data, filename) {
   if (!data || !data.length) { alert("No data to export."); return; }
 
@@ -885,12 +918,9 @@ function exportToExcel(data, filename) {
   ]);
 
   const wb = XLSX.utils.book_new();
-
-  /* ── Results sheet ── */
   const wsData = [headers, ...rows];
   const ws = XLSX.utils.aoa_to_sheet(wsData);
 
-  // Column widths
   ws['!cols'] = [
     {wch:12},{wch:10},{wch:24},{wch:28},{wch:12},{wch:18},
     {wch:9},{wch:9},{wch:14},{wch:9},{wch:14},{wch:8},
@@ -899,20 +929,18 @@ function exportToExcel(data, filename) {
 
   XLSX.utils.book_append_sheet(wb, ws, "Results");
 
-  /* ── Summary sheet ── */
-  const all = data;
-  const passCount = all.filter(r => r.passed === "PASS").length;
-  const failCount = all.length - passCount;
-  const avgScore  = all.length ? (all.reduce((a,r) => a + r.score_pct, 0) / all.length).toFixed(1) : 0;
+  const passCount = data.filter(r => r.passed === "PASS").length;
+  const failCount = data.length - passCount;
+  const avgScore  = data.length ? (data.reduce((a,r) => a + Number(r.score_pct), 0) / data.length).toFixed(1) : 0;
 
   const summaryData = [
     ["Covisian Compliance Assessment — Summary"],
     ["Generated", new Date().toLocaleString()],
     [],
-    ["Total Submissions", all.length],
+    ["Total Submissions", data.length],
     ["Passed", passCount],
     ["Failed", failCount],
-    ["Pass Rate", all.length ? (passCount / all.length * 100).toFixed(1) + "%" : "—"],
+    ["Pass Rate", data.length ? (passCount / data.length * 100).toFixed(1) + "%" : "—"],
     ["Average Score", avgScore + "%"],
     ["Pass Threshold", Math.round(CONFIG.PASS_THRESHOLD * 100) + "%"],
     ["Max Retries Allowed", CONFIG.MAX_RETRIES],
@@ -925,7 +953,7 @@ function exportToExcel(data, filename) {
   XLSX.writeFile(wb, filename || CONFIG.FILE_NAME);
 }
 
-/* ─── ADMIN ─── */
+/* ─── PANEL ADMINISTRADOR ─── */
 let adminAuthed = false;
 
 function openAdmin() {
@@ -934,6 +962,7 @@ function openAdmin() {
   if (adminAuthed) { renderAdminDashboard(); }
   else { renderAdminLogin(); }
 }
+
 function closeAdmin() {
   document.getElementById('adminPanel').style.display = 'none';
   document.body.style.overflow = '';
@@ -951,10 +980,12 @@ function renderAdminLogin() {
     </div>`;
 }
 
-function checkAdminPwd() {
+async function checkAdminPwd() {
   const val = document.getElementById('adminPwd').value;
   if (val === CONFIG.ADMIN_PASSWORD) {
     adminAuthed = true;
+    document.getElementById('adminBody').innerHTML = '<p style="text-align:center;padding:32px;">Loading data from Google Sheets...</p>';
+    await fetchRemoteResults();
     renderAdminDashboard();
   } else {
     document.getElementById('adminPwdErr').textContent = "Incorrect password.";
@@ -962,14 +993,13 @@ function checkAdminPwd() {
 }
 
 function renderAdminDashboard() {
-  const results = loadResults();
+  const results = globalAdminResults;
 
   const passCount = results.filter(r => r.passed === "PASS").length;
   const failCount = results.length - passCount;
   const avgScore  = results.length
-    ? (results.reduce((a,r) => a + r.score_pct, 0) / results.length).toFixed(1)
+    ? (results.reduce((a,r) => a + Number(r.score_pct), 0) / results.length).toFixed(1)
     : 0;
-  const uniqueAgents = new Set(results.map(r => r.email.toLowerCase())).size;
 
   document.getElementById('adminBody').innerHTML = `
     <div class="admin-stat-row">
@@ -979,14 +1009,14 @@ function renderAdminDashboard() {
       <div class="stat-box"><div class="val">${avgScore}%</div><div class="lbl">Avg Score</div></div>
     </div>
     <div class="admin-actions">
-      <button class="btn btn-success" onclick="exportToExcel(loadResults(), CONFIG.FILE_NAME)">⬇ Export All to Excel</button>
-      <button class="btn btn-secondary" onclick="exportToExcel(loadResults().filter(r=>r.passed==='PASS'), 'Covisian_Passed_Agents.xlsx')">⬇ Export Passed Only</button>
-      <button class="btn btn-secondary" onclick="exportToExcel(loadResults().filter(r=>r.passed==='FAIL'), 'Covisian_Failed_Agents.xlsx')">⬇ Export Failed Only</button>
-      <button class="btn btn-danger" onclick="clearAllData()" style="margin-left:auto">🗑 Clear All Data</button>
+      <button class="btn btn-primary" onclick="refreshAdminData()">🔄 Refresh Data</button>
+      <button class="btn btn-success" onclick="exportToExcel(globalAdminResults, CONFIG.FILE_NAME)">⬇ Export All to Excel</button>
+      <button class="btn btn-secondary" onclick="exportToExcel(globalAdminResults.filter(r=>r.passed==='PASS'), 'Covisian_Passed_Agents.xlsx')">⬇ Export Passed Only</button>
+      <button class="btn btn-secondary" onclick="exportToExcel(globalAdminResults.filter(r=>r.passed==='FAIL'), 'Covisian_Failed_Agents.xlsx')">⬇ Export Failed Only</button>
     </div>
     <div class="admin-table-wrap">
       ${results.length === 0
-        ? '<p style="color:var(--muted);text-align:center;padding:32px">No submissions yet.</p>'
+        ? '<p style="color:var(--muted);text-align:center;padding:32px">No submissions found in Google Sheets.</p>'
         : `<table>
             <thead><tr>
               <th>Date</th><th>Name</th><th>Email</th>
@@ -996,12 +1026,12 @@ function renderAdminDashboard() {
             <tbody>
               ${results.slice().reverse().map(r => `
                 <tr>
-                  <td>${r.date} ${r.time}</td>
-                  <td>${r.name}</td>
-                  <td>${r.email}</td>
-                  <td>${r.country}</td>
-                  <td>${r.team}</td>
-                  <td style="text-align:center">${r.attempt}</td>
+                  <td>${r.date || ''} ${r.time || ''}</td>
+                  <td>${r.name || ''}</td>
+                  <td>${r.email || ''}</td>
+                  <td>${r.country || ''}</td>
+                  <td>${r.team || ''}</td>
+                  <td style="text-align:center">${r.attempt || 1}</td>
                   <td style="text-align:center;font-weight:700">${r.score_pct}%<br><span style="font-size:.7rem;font-weight:400;color:var(--muted)">${r.correct}/${r.total}</span></td>
                   <td><span class="chip ${r.passed==='PASS'?'chip-pass':'chip-fail'}">${r.passed}</span></td>
                 </tr>`).join('')}
@@ -1010,14 +1040,12 @@ function renderAdminDashboard() {
     </div>`;
 }
 
-function clearAllData() {
-  if (confirm("⚠ Delete ALL test results from this device? This cannot be undone.")) {
-    localStorage.removeItem(STORAGE_KEY);
-    renderAdminDashboard();
-  }
+async function refreshAdminData() {
+  document.getElementById('adminBody').innerHTML = '<p style="text-align:center;padding:32px;">Updating data...</p>';
+  await fetchRemoteResults();
+  renderAdminDashboard();
 }
 
-// Close admin on backdrop click
 document.getElementById('adminPanel').addEventListener('click', function(e) {
   if (e.target === this) closeAdmin();
 });
