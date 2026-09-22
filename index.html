@@ -505,12 +505,12 @@
 ════════════════════════════════════════════════════════ */
 const CONFIG = {
   PASS_THRESHOLD: 0.80,      // 80%
-  MAX_RETRIES:    2,         // Máximos reintentos
-  ADMIN_PASSWORD: "Avaya123!",
+  MAX_RETRIES:    1,         // Máximos reintentos iniciales (Total 3 intentos)
+  ADMIN_PASSWORD: "Avaya123",
   FILE_NAME:      "Covisian_Compliance_Results.xlsx",
 
   // 🔗 PEGA AQUÍ TU URL DE GOOGLE APPS SCRIPT
-  APPS_SCRIPT_URL: "https://script.google.com/macros/s/AKfycbyWt7JNGNqBExRWwOVeIDSDF1A4BnCRGfiR33lgzXqyCSvT1_jEfkVhpBGO5TOBXXK_vQ/exec"
+  APPS_SCRIPT_URL: "https://script.google.com/macros/s/AKfycbyipIkNeEXBOPxT_eT_BIwibpGdZi4nUl2UPoMNNSp2-liLzOJKBIO6NuqQDAn2qw4H8g/exec"
 };
 /* ════════════════════════════════════════════════════════ */
 
@@ -629,15 +629,12 @@ function loadLocalResults() {
 }
 
 async function saveResult(rec) {
-  // Guardado local de respaldo
   const arr = loadLocalResults();
   arr.push(rec);
   localStorage.setItem(STORAGE_KEY, JSON.stringify(arr));
 
-  // Envío a Google Apps Script
   if (CONFIG.APPS_SCRIPT_URL && !CONFIG.APPS_SCRIPT_URL.includes("TU_SCRIPT_ID")) {
     try {
-      // mode: 'no-cors' permite enviar datos a Apps Script sin problemas de política de origen
       await fetch(CONFIG.APPS_SCRIPT_URL, {
         method: "POST",
         mode: "no-cors",
@@ -696,25 +693,29 @@ async function startTest() {
     errEl.style.display = "block"; return;
   }
 
-  // Verifica respuestas previas en Google Sheets
   await fetchRemoteResults();
 
-  const prevAttempts = getAttemptsForEmail(email);
-  const passedBefore = prevAttempts.some(r => r.passed === "PASS" || r.passed === true);
+  const userRecords  = getAttemptsForEmail(email);
+  const examAttempts = userRecords.filter(r => r.action_type !== "UNLOCK");
+  const unlocks      = userRecords.filter(r => r.action_type === "UNLOCK");
+
+  const passedBefore = examAttempts.some(r => r.passed === "PASS" || r.passed === true);
 
   if (passedBefore) {
     errEl.textContent = "✅ This email has already passed the assessment. Contact your administrator if you need to retake it.";
     errEl.style.display = "block"; return;
   }
 
-  if (prevAttempts.length >= (CONFIG.MAX_RETRIES + 1)) {
-    errEl.textContent = `⛔ Maximum attempts (${CONFIG.MAX_RETRIES + 1}) reached for this email. Contact your administrator.`;
+  const maxAllowed = (CONFIG.MAX_RETRIES + 1) + unlocks.length;
+
+  if (examAttempts.length >= maxAllowed) {
+    errEl.textContent = `⛔ Maximum attempts (${maxAllowed}) reached for this email. Contact your administrator to request an unlock.`;
     errEl.style.display = "block"; return;
   }
 
   errEl.style.display = "none";
   participant = { name, email, country, team };
-  attemptNumber = prevAttempts.length + 1;
+  attemptNumber = examAttempts.length + 1;
   answers = {};
   currentSection = 0;
   renderSection();
@@ -836,18 +837,22 @@ async function submitTest() {
     score_pct:     Math.round(pct * 100),
     pass_threshold:Math.round(CONFIG.PASS_THRESHOLD * 100),
     passed:        passed ? "PASS" : "FAIL",
+    action_type:   "ASSESSMENT",
     ...Object.fromEntries(breakdown.map(b => [`sec_${b.section.split('(')[0].trim().replace(/[^a-z0-9]/gi,'_').toLowerCase()}`, `${b.correct}/${b.total}`]))
   };
 
-  // Guardar resultado
   await saveResult(record);
   showResult(correct, total, pct, passed, breakdown);
 }
 
 function showResult(correct, total, pct, passed, breakdown) {
-  const prevAttempts = getAttemptsForEmail(participant.email);
-  const attemptsUsed = prevAttempts.length;
-  const retriesLeft  = Math.max(0, (CONFIG.MAX_RETRIES + 1) - attemptsUsed);
+  const userRecords  = getAttemptsForEmail(participant.email);
+  const examAttempts = userRecords.filter(r => r.action_type !== "UNLOCK");
+  const unlocks      = userRecords.filter(r => r.action_type === "UNLOCK");
+
+  const attemptsUsed = examAttempts.length;
+  const maxAllowed   = (CONFIG.MAX_RETRIES + 1) + unlocks.length;
+  const retriesLeft  = Math.max(0, maxAllowed - attemptsUsed);
   const canRetry     = !passed && retriesLeft > 0;
 
   document.getElementById('resultIcon').textContent  = passed ? '🎉' : '📋';
@@ -883,20 +888,20 @@ function showResult(correct, total, pct, passed, breakdown) {
 function retryTest() {
   answers = {};
   currentSection = 0;
-  attemptNumber++;
   renderSection();
   showScreen('screenTest');
 }
 
 function downloadMyResult() {
-  const myRecs = getAttemptsForEmail(participant.email);
+  const myRecs = getAttemptsForEmail(participant.email).filter(r => r.action_type !== "UNLOCK");
   if (!myRecs.length) return;
   const last = myRecs[myRecs.length - 1];
   exportToExcel([last], `My_Compliance_Result_${participant.name.replace(/\s+/g,'_')}.xlsx`);
 }
 
 function exportToExcel(data, filename) {
-  if (!data || !data.length) { alert("No data to export."); return; }
+  const cleanData = (data || []).filter(r => r.action_type !== "UNLOCK");
+  if (!cleanData.length) { alert("No data to export."); return; }
 
   const headers = [
     "Date", "Time", "Name", "Email", "Country", "Team/Client",
@@ -905,7 +910,7 @@ function exportToExcel(data, filename) {
     "Denial Process & TCPA", "UDAAP"
   ];
 
-  const rows = data.map(r => [
+  const rows = cleanData.map(r => [
     r.date, r.time, r.name, r.email, r.country, r.team,
     r.attempt, r.correct, r.total, r.score_pct, r.pass_threshold, r.passed,
     r.sec_compliance_ethics_and_information_security || "",
@@ -929,18 +934,18 @@ function exportToExcel(data, filename) {
 
   XLSX.utils.book_append_sheet(wb, ws, "Results");
 
-  const passCount = data.filter(r => r.passed === "PASS").length;
-  const failCount = data.length - passCount;
-  const avgScore  = data.length ? (data.reduce((a,r) => a + Number(r.score_pct), 0) / data.length).toFixed(1) : 0;
+  const passCount = cleanData.filter(r => r.passed === "PASS").length;
+  const failCount = cleanData.length - passCount;
+  const avgScore  = cleanData.length ? (cleanData.reduce((a,r) => a + Number(r.score_pct), 0) / cleanData.length).toFixed(1) : 0;
 
   const summaryData = [
     ["Covisian Compliance Assessment — Summary"],
     ["Generated", new Date().toLocaleString()],
     [],
-    ["Total Submissions", data.length],
+    ["Total Submissions", cleanData.length],
     ["Passed", passCount],
     ["Failed", failCount],
-    ["Pass Rate", data.length ? (passCount / data.length * 100).toFixed(1) + "%" : "—"],
+    ["Pass Rate", cleanData.length ? (passCount / cleanData.length * 100).toFixed(1) + "%" : "—"],
     ["Average Score", avgScore + "%"],
     ["Pass Threshold", Math.round(CONFIG.PASS_THRESHOLD * 100) + "%"],
     ["Max Retries Allowed", CONFIG.MAX_RETRIES],
@@ -953,7 +958,7 @@ function exportToExcel(data, filename) {
   XLSX.writeFile(wb, filename || CONFIG.FILE_NAME);
 }
 
-/* ─── PANEL ADMINISTRADOR ─── */
+/* ─── PANEL ADMINISTRADOR Y DESBLOQUEO ─── */
 let adminAuthed = false;
 
 function openAdmin() {
@@ -992,18 +997,44 @@ async function checkAdminPwd() {
   }
 }
 
-function renderAdminDashboard() {
-  const results = globalAdminResults;
+async function unlockUser(email, name, country, team) {
+  if (!confirm(`Are you sure you want to grant an extra attempt to ${email}?`)) return;
 
-  const passCount = results.filter(r => r.passed === "PASS").length;
-  const failCount = results.length - passCount;
-  const avgScore  = results.length
-    ? (results.reduce((a,r) => a + Number(r.score_pct), 0) / results.length).toFixed(1)
+  const now = new Date();
+  const unlockRecord = {
+    timestamp: now.toISOString(),
+    date: now.toLocaleDateString('en-US'),
+    time: now.toLocaleTimeString('en-US'),
+    name: name || "ADMIN_UNLOCK",
+    email: email,
+    country: country || "ADMIN",
+    team: team || "ADMIN",
+    attempt: 0,
+    correct: 0,
+    total: 0,
+    score_pct: 0,
+    pass_threshold: Math.round(CONFIG.PASS_THRESHOLD * 100),
+    passed: "UNLOCKED",
+    action_type: "UNLOCK"
+  };
+
+  await saveResult(unlockRecord);
+  alert(`User ${email} has been successfully unlocked!`);
+  await refreshAdminData();
+}
+
+function renderAdminDashboard() {
+  const examResults = globalAdminResults.filter(r => r.action_type !== "UNLOCK");
+
+  const passCount = examResults.filter(r => r.passed === "PASS").length;
+  const failCount = examResults.length - passCount;
+  const avgScore  = examResults.length
+    ? (examResults.reduce((a,r) => a + Number(r.score_pct), 0) / examResults.length).toFixed(1)
     : 0;
 
   document.getElementById('adminBody').innerHTML = `
     <div class="admin-stat-row">
-      <div class="stat-box"><div class="val">${results.length}</div><div class="lbl">Total Submissions</div></div>
+      <div class="stat-box"><div class="val">${examResults.length}</div><div class="lbl">Total Submissions</div></div>
       <div class="stat-box"><div class="val" style="color:var(--pass)">${passCount}</div><div class="lbl">Passed</div></div>
       <div class="stat-box"><div class="val" style="color:var(--fail)">${failCount}</div><div class="lbl">Failed</div></div>
       <div class="stat-box"><div class="val">${avgScore}%</div><div class="lbl">Avg Score</div></div>
@@ -1011,20 +1042,18 @@ function renderAdminDashboard() {
     <div class="admin-actions">
       <button class="btn btn-primary" onclick="refreshAdminData()">🔄 Refresh Data</button>
       <button class="btn btn-success" onclick="exportToExcel(globalAdminResults, CONFIG.FILE_NAME)">⬇ Export All to Excel</button>
-      <button class="btn btn-secondary" onclick="exportToExcel(globalAdminResults.filter(r=>r.passed==='PASS'), 'Covisian_Passed_Agents.xlsx')">⬇ Export Passed Only</button>
-      <button class="btn btn-secondary" onclick="exportToExcel(globalAdminResults.filter(r=>r.passed==='FAIL'), 'Covisian_Failed_Agents.xlsx')">⬇ Export Failed Only</button>
     </div>
     <div class="admin-table-wrap">
-      ${results.length === 0
+      ${examResults.length === 0
         ? '<p style="color:var(--muted);text-align:center;padding:32px">No submissions found in Google Sheets.</p>'
         : `<table>
             <thead><tr>
               <th>Date</th><th>Name</th><th>Email</th>
               <th>Country</th><th>Team</th>
-              <th>Attempt</th><th>Score</th><th>Result</th>
+              <th>Attempt</th><th>Score</th><th>Result</th><th>Actions</th>
             </tr></thead>
             <tbody>
-              ${results.slice().reverse().map(r => `
+              ${examResults.slice().reverse().map(r => `
                 <tr>
                   <td>${r.date || ''} ${r.time || ''}</td>
                   <td>${r.name || ''}</td>
@@ -1034,6 +1063,11 @@ function renderAdminDashboard() {
                   <td style="text-align:center">${r.attempt || 1}</td>
                   <td style="text-align:center;font-weight:700">${r.score_pct}%<br><span style="font-size:.7rem;font-weight:400;color:var(--muted)">${r.correct}/${r.total}</span></td>
                   <td><span class="chip ${r.passed==='PASS'?'chip-pass':'chip-fail'}">${r.passed}</span></td>
+                  <td style="text-align:center">
+                    ${r.passed === 'FAIL' 
+                      ? `<button class="btn btn-secondary" style="padding:4px 8px;font-size:0.75rem" onclick="unlockUser('${r.email}', '${r.name}', '${r.country}', '${r.team}')">🔓 Unlock</button>` 
+                      : '—'}
+                  </td>
                 </tr>`).join('')}
             </tbody>
           </table>`}
