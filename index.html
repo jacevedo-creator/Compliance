@@ -435,6 +435,26 @@
 <div id="screenTest" class="screen wrapper">
   <div class="card">
     <div class="card-body">
+      <div id="attemptBanner" style="
+        display:flex; align-items:center; justify-content:space-between;
+        background: linear-gradient(90deg, rgba(0,59,92,.06), rgba(0,151,167,.06));
+        border: 1px solid rgba(0,151,167,.2);
+        border-radius: 8px;
+        padding: 10px 16px;
+        margin-bottom: 18px;
+        font-size: .85rem;
+      ">
+        <span style="color:var(--muted)">👤 <strong id="bannerName"></strong> · <span id="bannerEmail" style="font-weight:400"></span></span>
+        <span id="bannerAttempt" style="
+          background: var(--brand);
+          color: #fff;
+          font-size: .75rem;
+          font-weight: 700;
+          padding: 4px 12px;
+          border-radius: 99px;
+          letter-spacing: .04em;
+        "></span>
+      </div>
       <div class="progress-label">
         <span id="progLabel">Section 1 of 7</span>
         <span id="progCount">0 / 48 answered</span>
@@ -506,7 +526,7 @@
 const CONFIG = {
   PASS_THRESHOLD: 0.80,      // 80%
   MAX_RETRIES:    2,         // Máximos reintentos iniciales (Total 3 intentos)
-  ADMIN_PASSWORD: "C0v1s14n2026$",
+  ADMIN_PASSWORD: "Avaya123",
   FILE_NAME:      "Covisian_Compliance_Results.xlsx",
 
   // 🔗 PEGA AQUÍ TU URL DE GOOGLE APPS SCRIPT
@@ -625,11 +645,34 @@ window.addEventListener('blur', () => {
   }
 });
 
+/* ─── BANCO DE PREGUNTAS Y MEZCLA ALEATORIA ─── */
 const ALL_QUESTIONS = [];
 let gi = 0;
+
 SECTIONS.forEach((sec, si) => {
   sec.questions.forEach((q, qi) => {
-    ALL_QUESTIONS.push({ ...q, sectionIndex: si, localIndex: qi, globalIndex: gi++ });
+    // 1. Guardamos cuál es el texto de la respuesta correcta original
+    const correctAnswerText = q.opts[q.ans];
+
+    // 2. Creamos una copia de las opciones y las mezclamos al azar (Algoritmo Fisher-Yates)
+    const shuffledOpts = [...q.opts];
+    for (let i = shuffledOpts.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [shuffledOpts[i], shuffledOpts[j]] = [shuffledOpts[j], shuffledOpts[i]];
+    }
+
+    // 3. Encontramos la nueva posición (índice) de la respuesta correcta ya mezclada
+    const newAnsIndex = shuffledOpts.indexOf(correctAnswerText);
+
+    // 4. Guardamos la pregunta con las opciones desordenadas
+    ALL_QUESTIONS.push({
+      q: q.q,
+      opts: shuffledOpts,
+      ans: newAnsIndex,
+      sectionIndex: si,
+      localIndex: qi,
+      globalIndex: gi++
+    });
   });
 });
 
@@ -676,13 +719,20 @@ async function fetchRemoteResults() {
       console.error("Error al leer desde Google Sheets:", err);
     }
   }
+  // Modo offline: carga localStorage en globalAdminResults solo para
+  // que el admin dashboard tenga datos. El conteo de intentos en
+  // getAttemptsForEmail usa localStorage directamente en modo offline.
   globalAdminResults = loadLocalResults();
   return globalAdminResults;
 }
 
 function getAttemptsForEmail(email) {
-  const combined = [...loadLocalResults(), ...globalAdminResults];
-  return combined.filter(r => r.email && r.email.toLowerCase() === email.toLowerCase());
+  // If Google Sheets is configured, globalAdminResults is the source of truth
+  // (populated by fetchRemoteResults before startTest runs).
+  // If offline, fall back to localStorage — never mix both to avoid double-counting.
+  const sheetsConfigured = CONFIG.APPS_SCRIPT_URL && !CONFIG.APPS_SCRIPT_URL.includes("TU_SCRIPT_ID");
+  const pool = sheetsConfigured ? globalAdminResults : loadLocalResults();
+  return pool.filter(r => r.email && r.email.toLowerCase() === email.toLowerCase());
 }
 
 /* ─── NAVEGACIÓN Y PANTALLAS ─── */
@@ -747,6 +797,15 @@ function renderSection() {
   const { start } = getSectionRange(currentSection);
 
   document.getElementById('sectionTag').textContent = sec.title;
+
+  // Attempt banner
+  const maxAllowed = CONFIG.MAX_RETRIES + 1;
+  document.getElementById('bannerName').textContent  = participant.name || '';
+  document.getElementById('bannerEmail').textContent = participant.email || '';
+  document.getElementById('bannerAttempt').textContent = `Attempt ${attemptNumber} of ${maxAllowed}`;
+  // Turn badge orange on last attempt
+  const isLast = attemptNumber >= maxAllowed;
+  document.getElementById('bannerAttempt').style.background = isLast ? 'var(--fail)' : 'var(--brand)';
 
   const totalAnswered = Object.keys(answers).length;
   const pct = Math.round((totalAnswered / ALL_QUESTIONS.length) * 100);
@@ -922,6 +981,8 @@ function showResult(correct, total, pct, passed, breakdown) {
 }
 
 function retryTest() {
+  const examAttempts = getAttemptsForEmail(participant.email).filter(r => r.action_type !== "UNLOCK");
+  attemptNumber = examAttempts.length + 1;
   answers = {};
   currentSection = 0;
   tabSwitchesCount = 0;
@@ -1081,6 +1142,7 @@ function renderAdminDashboard() {
     <div class="admin-actions">
       <button class="btn btn-primary" onclick="refreshAdminData()">🔄 Refresh Data</button>
       <button class="btn btn-success" onclick="exportToExcel(globalAdminResults, CONFIG.FILE_NAME)">⬇ Export All to Excel</button>
+      <button class="btn btn-danger" style="margin-left:auto" onclick="clearAllData()">🗑 Clear All Data</button>
     </div>
     <div class="admin-table-wrap">
       ${examResults.length === 0
@@ -1120,6 +1182,14 @@ async function refreshAdminData() {
   document.getElementById('adminBody').innerHTML = '<p style="text-align:center;padding:32px;">Updating data...</p>';
   await fetchRemoteResults();
   renderAdminDashboard();
+}
+
+function clearAllData() {
+  if (confirm("⚠ ¿Eliminar TODOS los registros de este dispositivo? Esta acción no se puede deshacer.")) {
+    localStorage.removeItem(STORAGE_KEY);
+    globalAdminResults = [];
+    renderAdminDashboard();
+  }
 }
 
 document.getElementById('adminPanel').addEventListener('click', function(e) {
