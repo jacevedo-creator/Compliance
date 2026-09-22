@@ -505,12 +505,12 @@
 ════════════════════════════════════════════════════════ */
 const CONFIG = {
   PASS_THRESHOLD: 0.80,      // 80%
-  MAX_RETRIES:    1,         // Máximos reintentos iniciales (Total 3 intentos)
+  MAX_RETRIES:    2,         // Máximos reintentos iniciales (Total 3 intentos)
   ADMIN_PASSWORD: "Avaya123",
   FILE_NAME:      "Covisian_Compliance_Results.xlsx",
 
   // 🔗 PEGA AQUÍ TU URL DE GOOGLE APPS SCRIPT
-  APPS_SCRIPT_URL: "https://script.google.com/macros/s/AKfycbyipIkNeEXBOPxT_eT_BIwibpGdZi4nUl2UPoMNNSp2-liLzOJKBIO6NuqQDAn2qw4H8g/exec"
+  APPS_SCRIPT_URL: "https://script.google.com/macros/s/AKfycbxNuO_RRrUswGO9XxAS9T3OxwG-UT7_HGS_bba4kA7LjIRv-NMkcRBpUs7DXfpGEFk9Fw/exec"
 };
 /* ════════════════════════════════════════════════════════ */
 
@@ -601,13 +601,29 @@ const SECTIONS = [
   }
 ];
 
-/* ─── ESTADO GLOBAL ─── */
+/* ─── ESTADO GLOBAL Y MONITOREO ─── */
 let participant = {};
 let answers = {};
 let currentSection = 0;
 let attemptNumber = 1;
 let globalAdminResults = [];
 const STORAGE_KEY = "covisian_compliance_results_v2";
+
+// Variables de Monitoreo
+let tabSwitchesCount = 0;
+let isTestActive = false;
+
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden && isTestActive) {
+    tabSwitchesCount++;
+  }
+});
+
+window.addEventListener('blur', () => {
+  if (isTestActive) {
+    tabSwitchesCount++;
+  }
+});
 
 const ALL_QUESTIONS = [];
 let gi = 0;
@@ -641,7 +657,6 @@ async function saveResult(rec) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(rec)
       });
-      console.log("Resultado enviado exitosamente a Google Sheets.");
     } catch (err) {
       console.error("Error al enviar a Google Sheets:", err);
     }
@@ -718,6 +733,11 @@ async function startTest() {
   attemptNumber = examAttempts.length + 1;
   answers = {};
   currentSection = 0;
+  
+  // Reiniciar y activar el monitoreo
+  tabSwitchesCount = 0;
+  isTestActive = true;
+
   renderSection();
   showScreen('screenTest');
 }
@@ -804,6 +824,9 @@ async function submitTest() {
     return;
   }
 
+  // Desactivar el monitoreo
+  isTestActive = false;
+
   let correct = 0;
   ALL_QUESTIONS.forEach(q => {
     if (answers[q.globalIndex] === q.ans) correct++;
@@ -823,22 +846,35 @@ async function submitTest() {
     return { section: sec.title, correct: secCorrect, total: sec.questions.length };
   });
 
+// Mapeo manual directo para evitar desfases o propiedades fantasma
   const record = {
-    timestamp:     now.toISOString(),
-    date:          now.toLocaleDateString('en-US'),
-    time:          now.toLocaleTimeString('en-US'),
-    name:          participant.name,
-    email:         participant.email,
-    country:       participant.country,
-    team:          participant.team,
-    attempt:       attemptNumber,
-    correct,
-    total,
-    score_pct:     Math.round(pct * 100),
-    pass_threshold:Math.round(CONFIG.PASS_THRESHOLD * 100),
-    passed:        passed ? "PASS" : "FAIL",
-    action_type:   "ASSESSMENT",
-    ...Object.fromEntries(breakdown.map(b => [`sec_${b.section.split('(')[0].trim().replace(/[^a-z0-9]/gi,'_').toLowerCase()}`, `${b.correct}/${b.total}`]))
+    timestamp:      now.toISOString(),
+    date:           now.toLocaleDateString('en-US'),
+    time:           now.toLocaleTimeString('en-US'),
+    name:           participant.name,
+    email:          participant.email,
+    country:        participant.country,
+    team:           participant.team,
+    attempt:        attemptNumber,
+    correct:        correct,
+    total:          total,
+    score_pct:      Math.round(pct * 100),
+    pass_threshold: Math.round(CONFIG.PASS_THRESHOLD * 100),
+    passed:         passed ? "PASS" : "FAIL",
+    
+    // 👁️ Conteo real de cambios de pestaña
+    tab_switches:   tabSwitchesCount, 
+    
+    // Mapeo explícito por posición fija de sección
+    sec_compliance_ethics_and_information_security: `${breakdown[0]?.correct || 0}/${breakdown[0]?.total || 0}`,
+    sec_equal_credit_opportunity_act:               `${breakdown[1]?.correct || 0}/${breakdown[1]?.total || 0}`,
+    sec_fair_credit_reporting_act:                  `${breakdown[2]?.correct || 0}/${breakdown[2]?.total || 0}`,
+    sec_gramm_leach_bliley_act:                     `${breakdown[3]?.correct || 0}/${breakdown[3]?.total || 0}`,
+    sec_ofac__aml__bsa__scra_and_mla:                `${breakdown[4]?.correct || 0}/${breakdown[4]?.total || 0}`,
+    sec_denial_process_and_tcpa:                    `${breakdown[5]?.correct || 0}/${breakdown[5]?.total || 0}`,
+    sec_unfair__deceptive__or_abusive_acts_or_practices: `${breakdown[6]?.correct || 0}/${breakdown[6]?.total || 0}`,
+    
+    action_type:    "ASSESSMENT"
   };
 
   await saveResult(record);
@@ -888,6 +924,8 @@ function showResult(correct, total, pct, passed, breakdown) {
 function retryTest() {
   answers = {};
   currentSection = 0;
+  tabSwitchesCount = 0;
+  isTestActive = true;
   renderSection();
   showScreen('screenTest');
 }
@@ -905,14 +943,14 @@ function exportToExcel(data, filename) {
 
   const headers = [
     "Date", "Time", "Name", "Email", "Country", "Team/Client",
-    "Attempt #", "Correct", "Total Questions", "Score %", "Pass Threshold %", "Result",
+    "Attempt #", "Correct", "Total Questions", "Score %", "Pass Threshold %", "Result", "Tab Switches 👁️",
     "Compliance Ethics", "ECOA", "FCRA", "GLBA", "OFAC/AML/BSA/SCRA/MLA",
     "Denial Process & TCPA", "UDAAP"
   ];
 
   const rows = cleanData.map(r => [
     r.date, r.time, r.name, r.email, r.country, r.team,
-    r.attempt, r.correct, r.total, r.score_pct, r.pass_threshold, r.passed,
+    r.attempt, r.correct, r.total, r.score_pct, r.pass_threshold, r.passed, r.tab_switches || 0,
     r.sec_compliance_ethics_and_information_security || "",
     r.sec_equal_credit_opportunity_act || "",
     r.sec_fair_credit_reporting_act || "",
@@ -928,7 +966,7 @@ function exportToExcel(data, filename) {
 
   ws['!cols'] = [
     {wch:12},{wch:10},{wch:24},{wch:28},{wch:12},{wch:18},
-    {wch:9},{wch:9},{wch:14},{wch:9},{wch:14},{wch:8},
+    {wch:9},{wch:9},{wch:14},{wch:9},{wch:14},{wch:8},{wch:14},
     {wch:18},{wch:8},{wch:8},{wch:8},{wch:22},{wch:20},{wch:8}
   ];
 
@@ -1015,6 +1053,7 @@ async function unlockUser(email, name, country, team) {
     score_pct: 0,
     pass_threshold: Math.round(CONFIG.PASS_THRESHOLD * 100),
     passed: "UNLOCKED",
+    tab_switches: 0,
     action_type: "UNLOCK"
   };
 
@@ -1050,7 +1089,7 @@ function renderAdminDashboard() {
             <thead><tr>
               <th>Date</th><th>Name</th><th>Email</th>
               <th>Country</th><th>Team</th>
-              <th>Attempt</th><th>Score</th><th>Result</th><th>Actions</th>
+              <th>Attempt</th><th>Score</th><th>Result</th><th>Switches 👁️</th><th>Actions</th>
             </tr></thead>
             <tbody>
               ${examResults.slice().reverse().map(r => `
@@ -1063,6 +1102,9 @@ function renderAdminDashboard() {
                   <td style="text-align:center">${r.attempt || 1}</td>
                   <td style="text-align:center;font-weight:700">${r.score_pct}%<br><span style="font-size:.7rem;font-weight:400;color:var(--muted)">${r.correct}/${r.total}</span></td>
                   <td><span class="chip ${r.passed==='PASS'?'chip-pass':'chip-fail'}">${r.passed}</span></td>
+                  <td style="text-align:center;font-weight:bold;color:${(r.tab_switches || 0) > 2 ? 'var(--fail)' : 'inherit'}">
+                    ${r.tab_switches || 0}
+                  </td>
                   <td style="text-align:center">
                     ${r.passed === 'FAIL' 
                       ? `<button class="btn btn-secondary" style="padding:4px 8px;font-size:0.75rem" onclick="unlockUser('${r.email}', '${r.name}', '${r.country}', '${r.team}')">🔓 Unlock</button>` 
