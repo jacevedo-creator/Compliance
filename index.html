@@ -21,11 +21,6 @@
     --shadow:   0 2px 12px rgba(0,59,92,.10);
   }
 
-  /* ═══════════════════════════════════
-     ADMIN CONFIG — EDIT HERE
-  ═══════════════════════════════════ */
-  /* JS CONFIG IS BELOW IN <script> */
-
   * { box-sizing: border-box; margin: 0; padding: 0; }
 
   body {
@@ -254,6 +249,43 @@
   .stat-box .val { font-size: 1.5rem; font-weight: 700; color: var(--brand); }
   .stat-box .lbl { font-size: .72rem; color: var(--muted); margin-top: 3px; }
 
+  /* ─── INCORRECT QUESTIONS LIST ─── */
+  .wrong-questions-container {
+    margin-top: 24px;
+    margin-bottom: 24px;
+    background: #FFF5F5;
+    border: 1px solid rgba(198,40,40,.2);
+    border-radius: var(--radius);
+    padding: 20px;
+  }
+  .wrong-questions-title {
+    font-size: 1rem;
+    font-weight: 700;
+    color: var(--fail);
+    margin-bottom: 12px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .wrong-question-item {
+    background: #FFFFFF;
+    border: 1px solid #FFE0E0;
+    border-left: 4px solid var(--fail);
+    border-radius: 6px;
+    padding: 12px 16px;
+    margin-bottom: 10px;
+    font-size: .88rem;
+    line-height: 1.45;
+  }
+  .wrong-question-item:last-child { margin-bottom: 0; }
+  .wrong-question-num {
+    font-weight: 700;
+    color: var(--fail);
+    margin-bottom: 2px;
+    font-size: .75rem;
+    text-transform: uppercase;
+  }
+
   /* ─── RETRY NOTICE ─── */
   .retry-notice {
     background: rgba(198,40,40,.07);
@@ -382,9 +414,7 @@
   <button class="admin-btn" onclick="openAdmin()">⚙ Admin</button>
 </header>
 
-<!-- ════════════════════════════════════════════════════════
-     SCREEN 1 — INTAKE FORM
-════════════════════════════════════════════════════════ -->
+<!-- SCREEN 1 — INTAKE FORM -->
 <div id="screenIntake" class="screen active wrapper">
   <div class="card">
     <div class="card-header">
@@ -429,9 +459,7 @@
   </div>
 </div>
 
-<!-- ════════════════════════════════════════════════════════
-     SCREEN 2 — TEST
-════════════════════════════════════════════════════════ -->
+<!-- SCREEN 2 — TEST -->
 <div id="screenTest" class="screen wrapper">
   <div class="card">
     <div class="card-body">
@@ -476,9 +504,7 @@
   </div>
 </div>
 
-<!-- ════════════════════════════════════════════════════════
-     SCREEN 3 — RESULT
-════════════════════════════════════════════════════════ -->
+<!-- SCREEN 3 — RESULT -->
 <div id="screenResult" class="screen wrapper">
   <div class="card">
     <div class="card-header" id="resultHeader">
@@ -495,6 +521,15 @@
         <div class="stat-box"><div class="val" id="statWrong"></div><div class="lbl">Incorrect</div></div>
         <div class="stat-box"><div class="val" id="statAttempt"></div><div class="lbl">Attempt #</div></div>
       </div>
+      
+      <!-- CONTENEDOR DE PREGUNTAS INCORRECTAS -->
+      <div id="wrongQuestionsSection" class="wrong-questions-container" style="display:none;">
+        <div class="wrong-questions-title">
+          <span>⚠️ Questions Answered Incorrectly</span>
+        </div>
+        <div id="wrongQuestionsList"></div>
+      </div>
+
       <div id="retryNotice"></div>
       <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:8px;">
         <button class="btn btn-primary" onclick="downloadMyResult()">⬇ Download My Result</button>
@@ -504,9 +539,7 @@
   </div>
 </div>
 
-<!-- ════════════════════════════════════════════════════════
-     ADMIN PANEL
-════════════════════════════════════════════════════════ -->
+<!-- ADMIN PANEL -->
 <div id="adminPanel">
   <div class="admin-modal">
     <div class="admin-modal-header">
@@ -520,19 +553,15 @@
 </div>
 
 <script>
-/* ════════════════════════════════════════════════════════
-   ★  CONFIGURACIÓN — EDITA ESTA SECCIÓN  ★
-════════════════════════════════════════════════════════ */
+/* ─── CONFIGURACIÓN ─── */
 const CONFIG = {
   PASS_THRESHOLD: 0.80,      // 80%
-  MAX_RETRIES:    49,      // Máximos reintentos iniciales (Total 3 intentos)
-  ADMIN_PASSWORD: "C0v1s14n2026$",
+  MAX_RETRIES:    49,        // Máximos reintentos iniciales
+  ADMIN_PASSWORD: "Avaya123",
   FILE_NAME:      "Covisian_Compliance_Results.xlsx",
 
-  // 🔗 PEGA AQUÍ TU URL DE GOOGLE APPS SCRIPT
   APPS_SCRIPT_URL: "https://script.google.com/macros/s/AKfycbxNuO_RRrUswGO9XxAS9T3OxwG-UT7_HGS_bba4kA7LjIRv-NMkcRBpUs7DXfpGEFk9Fw/exec"
 };
-/* ════════════════════════════════════════════════════════ */
 
 /* ─── BANCO DE PREGUNTAS ─── */
 const SECTIONS = [
@@ -629,7 +658,6 @@ let attemptNumber = 1;
 let globalAdminResults = [];
 const STORAGE_KEY = "covisian_compliance_results_v2";
 
-// Variables de Monitoreo
 let tabSwitchesCount = 0;
 let isTestActive = false;
 
@@ -651,25 +679,22 @@ let gi = 0;
 
 SECTIONS.forEach((sec, si) => {
   sec.questions.forEach((q, qi) => {
-    // 1. Guardamos cuál es el texto de la respuesta correcta original
     const correctAnswerText = q.opts[q.ans];
 
-    // 2. Creamos una copia de las opciones y las mezclamos al azar (Algoritmo Fisher-Yates)
     const shuffledOpts = [...q.opts];
     for (let i = shuffledOpts.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
       [shuffledOpts[i], shuffledOpts[j]] = [shuffledOpts[j], shuffledOpts[i]];
     }
 
-    // 3. Encontramos la nueva posición (índice) de la respuesta correcta ya mezclada
     const newAnsIndex = shuffledOpts.indexOf(correctAnswerText);
 
-    // 4. Guardamos la pregunta con las opciones desordenadas
     ALL_QUESTIONS.push({
       q: q.q,
       opts: shuffledOpts,
       ans: newAnsIndex,
       sectionIndex: si,
+      sectionTitle: sec.title,
       localIndex: qi,
       globalIndex: gi++
     });
@@ -719,17 +744,11 @@ async function fetchRemoteResults() {
       console.error("Error al leer desde Google Sheets:", err);
     }
   }
-  // Modo offline: carga localStorage en globalAdminResults solo para
-  // que el admin dashboard tenga datos. El conteo de intentos en
-  // getAttemptsForEmail usa localStorage directamente en modo offline.
   globalAdminResults = loadLocalResults();
   return globalAdminResults;
 }
 
 function getAttemptsForEmail(email) {
-  // If Google Sheets is configured, globalAdminResults is the source of truth
-  // (populated by fetchRemoteResults before startTest runs).
-  // If offline, fall back to localStorage — never mix both to avoid double-counting.
   const sheetsConfigured = CONFIG.APPS_SCRIPT_URL && !CONFIG.APPS_SCRIPT_URL.includes("TU_SCRIPT_ID");
   const pool = sheetsConfigured ? globalAdminResults : loadLocalResults();
   return pool.filter(r => r.email && r.email.toLowerCase() === email.toLowerCase());
@@ -784,7 +803,6 @@ async function startTest() {
   answers = {};
   currentSection = 0;
   
-  // Reiniciar y activar el monitoreo
   tabSwitchesCount = 0;
   isTestActive = true;
 
@@ -798,12 +816,10 @@ function renderSection() {
 
   document.getElementById('sectionTag').textContent = sec.title;
 
-  // Attempt banner
   const maxAllowed = CONFIG.MAX_RETRIES + 1;
   document.getElementById('bannerName').textContent  = participant.name || '';
   document.getElementById('bannerEmail').textContent = participant.email || '';
   document.getElementById('bannerAttempt').textContent = `Attempt ${attemptNumber} of ${maxAllowed}`;
-  // Turn badge orange on last attempt
   const isLast = attemptNumber >= maxAllowed;
   document.getElementById('bannerAttempt').style.background = isLast ? 'var(--fail)' : 'var(--brand)';
 
@@ -883,12 +899,18 @@ async function submitTest() {
     return;
   }
 
-  // Desactivar el monitoreo
   isTestActive = false;
 
   let correct = 0;
+  const wrongQuestions = [];
+
   ALL_QUESTIONS.forEach(q => {
-    if (answers[q.globalIndex] === q.ans) correct++;
+    if (answers[q.globalIndex] === q.ans) {
+      correct++;
+    } else {
+      // Guardar las preguntas incorrectas (sin la respuesta correcta)
+      wrongQuestions.push(q);
+    }
   });
 
   const total   = ALL_QUESTIONS.length;
@@ -905,7 +927,6 @@ async function submitTest() {
     return { section: sec.title, correct: secCorrect, total: sec.questions.length };
   });
 
-// Mapeo manual directo para evitar desfases o propiedades fantasma
   const record = {
     timestamp:      now.toISOString(),
     date:           now.toLocaleDateString('en-US'),
@@ -920,11 +941,8 @@ async function submitTest() {
     score_pct:      Math.round(pct * 100),
     pass_threshold: Math.round(CONFIG.PASS_THRESHOLD * 100),
     passed:         passed ? "PASS" : "FAIL",
-    
-    // 👁️ Conteo real de cambios de pestaña
     tab_switches:   tabSwitchesCount, 
     
-    // Mapeo explícito por posición fija de sección
     sec_compliance_ethics_and_information_security: `${breakdown[0]?.correct || 0}/${breakdown[0]?.total || 0}`,
     sec_equal_credit_opportunity_act:               `${breakdown[1]?.correct || 0}/${breakdown[1]?.total || 0}`,
     sec_fair_credit_reporting_act:                  `${breakdown[2]?.correct || 0}/${breakdown[2]?.total || 0}`,
@@ -937,10 +955,10 @@ async function submitTest() {
   };
 
   await saveResult(record);
-  showResult(correct, total, pct, passed, breakdown);
+  showResult(correct, total, pct, passed, breakdown, wrongQuestions);
 }
 
-function showResult(correct, total, pct, passed, breakdown) {
+function showResult(correct, total, pct, passed, breakdown, wrongQuestions) {
   const userRecords  = getAttemptsForEmail(participant.email);
   const examAttempts = userRecords.filter(r => r.action_type !== "UNLOCK");
   const unlocks      = userRecords.filter(r => r.action_type === "UNLOCK");
@@ -964,6 +982,22 @@ function showResult(correct, total, pct, passed, breakdown) {
 
   document.getElementById('resultTitle').textContent = passed ? 'Assessment Passed!' : 'Assessment Complete';
   document.getElementById('resultSub').textContent   = `${participant.name} · ${participant.team} · ${participant.country}`;
+
+  // Renderizar la lista de preguntas incorrectas
+  const wrongSec = document.getElementById('wrongQuestionsSection');
+  const wrongList = document.getElementById('wrongQuestionsList');
+
+  if (wrongQuestions && wrongQuestions.length > 0) {
+    wrongList.innerHTML = wrongQuestions.map(q => `
+      <div class="wrong-question-item">
+        <div class="wrong-question-num">Question ${q.globalIndex + 1} (${q.sectionTitle})</div>
+        <div>${q.q}</div>
+      </div>
+    `).join('');
+    wrongSec.style.display = 'block';
+  } else {
+    wrongSec.style.display = 'none';
+  }
 
   const noticeEl = document.getElementById('retryNotice');
   if (!passed) {
