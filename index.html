@@ -464,7 +464,7 @@
   <div class="card">
     <div class="card-body">
       <div id="attemptBanner" style="
-        display:flex; align-items:center; justify-content:space-between;
+        display:flex; align-items:center; justify-style:space-between;
         background: linear-gradient(90deg, rgba(0,59,92,.06), rgba(0,151,167,.06));
         border: 1px solid rgba(0,151,167,.2);
         border-radius: 8px;
@@ -557,7 +557,7 @@
 const CONFIG = {
   PASS_THRESHOLD: 0.80,      // 80%
   MAX_RETRIES:    49,        // Máximos reintentos iniciales
-  ADMIN_PASSWORD: "C0v1s14n2026$",
+  ADMIN_PASSWORD: "Avaya123",
   FILE_NAME:      "Covisian_Compliance_Results.xlsx",
 
   APPS_SCRIPT_URL: "https://script.google.com/macros/s/AKfycbxNuO_RRrUswGO9XxAS9T3OxwG-UT7_HGS_bba4kA7LjIRv-NMkcRBpUs7DXfpGEFk9Fw/exec"
@@ -908,7 +908,6 @@ async function submitTest() {
     if (answers[q.globalIndex] === q.ans) {
       correct++;
     } else {
-      // Guardar las preguntas incorrectas (sin la respuesta correcta)
       wrongQuestions.push(q);
     }
   });
@@ -918,6 +917,10 @@ async function submitTest() {
   const passed  = pct >= CONFIG.PASS_THRESHOLD;
   const now     = new Date();
 
+  const cleanTabSwitches = Number.isInteger(Number(tabSwitchesCount)) && Number(tabSwitchesCount) >= 0 
+    ? Number(tabSwitchesCount) 
+    : 0;
+
   const breakdown = SECTIONS.map((sec, si) => {
     const { start } = getSectionRange(si);
     let secCorrect = 0;
@@ -926,6 +929,9 @@ async function submitTest() {
     });
     return { section: sec.title, correct: secCorrect, total: sec.questions.length };
   });
+
+  // Guardar puntaje limpio de la sección formateado como cadena de texto
+  const fmtSection = (sec) => sec ? `'${sec.correct}/${sec.total}` : "'0/0";
 
   const record = {
     timestamp:      now.toISOString(),
@@ -941,15 +947,15 @@ async function submitTest() {
     score_pct:      Math.round(pct * 100),
     pass_threshold: Math.round(CONFIG.PASS_THRESHOLD * 100),
     passed:         passed ? "PASS" : "FAIL",
-    tab_switches:   tabSwitchesCount, 
+    tab_switches:   cleanTabSwitches,
     
-    sec_compliance_ethics_and_information_security: `${breakdown[0]?.correct || 0}/${breakdown[0]?.total || 0}`,
-    sec_equal_credit_opportunity_act:               `${breakdown[1]?.correct || 0}/${breakdown[1]?.total || 0}`,
-    sec_fair_credit_reporting_act:                  `${breakdown[2]?.correct || 0}/${breakdown[2]?.total || 0}`,
-    sec_gramm_leach_bliley_act:                     `${breakdown[3]?.correct || 0}/${breakdown[3]?.total || 0}`,
-    sec_ofac__aml__bsa__scra_and_mla:                `${breakdown[4]?.correct || 0}/${breakdown[4]?.total || 0}`,
-    sec_denial_process_and_tcpa:                    `${breakdown[5]?.correct || 0}/${breakdown[5]?.total || 0}`,
-    sec_unfair__deceptive__or_abusive_acts_or_practices: `${breakdown[6]?.correct || 0}/${breakdown[6]?.total || 0}`,
+    sec_compliance_ethics_and_information_security: fmtSection(breakdown[0]),
+    sec_equal_credit_opportunity_act:               fmtSection(breakdown[1]),
+    sec_fair_credit_reporting_act:                  fmtSection(breakdown[2]),
+    sec_gramm_leach_bliley_act:                     fmtSection(breakdown[3]),
+    sec_ofac__aml__bsa__scra_and_mla:                fmtSection(breakdown[4]),
+    sec_denial_process_and_tcpa:                    fmtSection(breakdown[5]),
+    sec_unfair__deceptive__or_abusive_acts_or_practices: fmtSection(breakdown[6]),
     
     action_type:    "ASSESSMENT"
   };
@@ -1043,26 +1049,67 @@ function exportToExcel(data, filename) {
     "Denial Process & TCPA", "UDAAP"
   ];
 
+  // Helper para forzar la conversión del puntaje a texto limpio sin apóstrofes ni formatos ISO
+  const sanitizeScore = (val) => {
+    if (!val) return "";
+    let str = String(val).replace(/^'/, '').trim();
+    
+    // Si la cadena proviene de una fecha ISO rellenada previamente por la hoja
+    if (str.includes("T") && str.includes("-")) {
+      const parts = str.split("T")[0].split("-");
+      if (parts.length === 3) {
+        const month = parseInt(parts[1], 10);
+        const day = parseInt(parts[2], 10);
+        return `${day}/${month}`;
+      }
+    }
+    return str;
+  };
+
   const rows = cleanData.map(r => [
-    r.date, r.time, r.name, r.email, r.country, r.team,
-    r.attempt, r.correct, r.total, r.score_pct, r.pass_threshold, r.passed, r.tab_switches || 0,
-    r.sec_compliance_ethics_and_information_security || "",
-    r.sec_equal_credit_opportunity_act || "",
-    r.sec_fair_credit_reporting_act || "",
-    r.sec_gramm_leach_bliley_act || "",
-    r.sec_ofac__aml__bsa__scra_and_mla || "",
-    r.sec_denial_process_and_tcpa || "",
-    r.sec_unfair__deceptive__or_abusive_acts_or_practices || ""
+    r.date, 
+    r.time, 
+    r.name, 
+    r.email, 
+    r.country, 
+    r.team,
+    r.attempt, 
+    r.correct, 
+    r.total, 
+    r.score_pct, 
+    r.pass_threshold, 
+    r.passed, 
+    Number.isInteger(Number(r.tab_switches)) && Number(r.tab_switches) >= 0 ? Number(r.tab_switches) : 0,
+    sanitizeScore(r.sec_compliance_ethics_and_information_security),
+    sanitizeScore(r.sec_equal_credit_opportunity_act),
+    sanitizeScore(r.sec_fair_credit_reporting_act),
+    sanitizeScore(r.sec_gramm_leach_bliley_act),
+    sanitizeScore(r.sec_ofac__aml__bsa__scra_and_mla),
+    sanitizeScore(r.sec_denial_process_and_tcpa),
+    sanitizeScore(r.sec_unfair__deceptive__or_abusive_acts_or_practices)
   ]);
 
   const wb = XLSX.utils.book_new();
   const wsData = [headers, ...rows];
-  const ws = XLSX.utils.aoa_to_sheet(wsData);
+  
+  const ws = XLSX.utils.aoa_to_sheet(wsData, { cellDates: false });
+
+  // Forzar explícitamente las celdas de las secciones como tipo Texto ('s') en el archivo Excel
+  const sectionColIndexes = [13, 14, 15, 16, 17, 18, 19];
+  for (let r = 1; r <= rows.length; r++) {
+    sectionColIndexes.forEach(col => {
+      const cellAddress = XLSX.utils.encode_cell({ r: r, c: col });
+      if (ws[cellAddress]) {
+        ws[cellAddress].t = 's'; // Fuerza tipo 'string'
+        ws[cellAddress].v = String(ws[cellAddress].v);
+      }
+    });
+  }
 
   ws['!cols'] = [
     {wch:12},{wch:10},{wch:24},{wch:28},{wch:12},{wch:18},
     {wch:9},{wch:9},{wch:14},{wch:9},{wch:14},{wch:8},{wch:14},
-    {wch:18},{wch:8},{wch:8},{wch:8},{wch:22},{wch:20},{wch:8}
+    {wch:18},{wch:10},{wch:10},{wch:10},{wch:22},{wch:20},{wch:10}
   ];
 
   XLSX.utils.book_append_sheet(wb, ws, "Results");
